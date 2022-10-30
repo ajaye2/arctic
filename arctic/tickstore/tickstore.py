@@ -22,7 +22,7 @@ try:
 except ImportError:
     from pandas.lib import infer_dtype
 
-from ..date import DateRange, to_pandas_closed_closed, mktz, datetime_to_ms, ms_to_datetime, CLOSED_CLOSED, to_dt, utc_dt_to_local_dt
+from ..date import DateRange, to_pandas_closed_closed, mktz, datetime_to_ns, ns_to_datetime, CLOSED_CLOSED, to_dt, utc_dt_to_local_dt
 from ..decorators import mongo_retry
 from ..exceptions import OverlappingDataException, NoDataFoundException, UnorderedDataException, UnhandledDtypeException, ArcticException
 from .._util import indent
@@ -334,7 +334,8 @@ class TickStore(object):
             raise NoDataFoundException("No Data found for {} in range: {}".format(symbol, date_range))
         rtn = self._pad_and_fix_dtypes(rtn, column_dtypes)
 
-        index = pd.to_datetime(np.concatenate(rtn[INDEX]), utc=True, unit='ms')
+        # index = pd.to_datetime(np.concatenate(rtn[INDEX]), utc=True, unit='ms')
+        index = (np.concatenate(rtn[INDEX])).astype("datetime64[ns]")
         if columns is None:
             columns = [x for x in rtn.keys() if x not in (INDEX, 'SYMBOL')]
         if multiple_symbols and 'SYMBOL' not in columns:
@@ -355,7 +356,8 @@ class TickStore(object):
         mgr = _arrays_to_mgr(arrays, columns, index, columns, dtype=None)
         rtn = pd.DataFrame(mgr)
         # Present data in the user's default TimeZone
-        rtn.index = rtn.index.tz_convert(mktz())
+        # rtn.index = rtn.index.tz_convert(mktz())
+        rtn.index = rtn.index.tz_localize(dt.now().astimezone().tzinfo)
 
         t = (dt.now() - perf_start).total_seconds()
         ticks = len(rtn)
@@ -424,7 +426,8 @@ class TickStore(object):
         first_dt = im[IMAGE_TIME]
         if not first_dt.tzinfo:
             first_dt = first_dt.replace(tzinfo=mktz('UTC'))
-        document[INDEX] = np.insert(document[INDEX], 0, np.uint64(datetime_to_ms(first_dt)))
+        # document[INDEX] = np.insert(document[INDEX], 0, np.uint64(datetime_to_ms(first_dt)))
+        document[INDEX] = np.insert(document[INDEX], 0, np.uint64(datetime_to_ns(first_dt)))
         for field in image:
             if field == INDEX:
                 continue
@@ -624,12 +627,20 @@ class TickStore(object):
             rtn.append(bucket)
         return rtn
 
+    # @staticmethod
+    # def _to_ms(date):
+    #     if isinstance(date, dt):
+    #         if not date.tzinfo:
+    #             logger.warning('WARNING: treating naive datetime as UTC in write path')
+    #         return datetime_to_ms(date)
+    #     return date
+
     @staticmethod
-    def _to_ms(date):
+    def _to_ns(date):
         if isinstance(date, dt):
             if not date.tzinfo:
                 logger.warning('WARNING: treating naive datetime as UTC in write path')
-            return datetime_to_ms(date)
+            return datetime_to_ns(date)
         return date
 
     @staticmethod
@@ -721,9 +732,9 @@ class TickStore(object):
             rtn[COLUMNS][col] = col_data
         rtn[INDEX] = Binary(
             lz4_compressHC(np.concatenate(
-                ([recs[index_name][0].astype('datetime64[ms]').view('uint64')],
+                ([recs[index_name][0].astype('datetime64[ns]').view('uint64')],
                  np.diff(
-                     recs[index_name].astype('datetime64[ms]').view('uint64')))).tostring()))
+                     recs[index_name].astype('datetime64[ns]').view('uint64')))).tostring()))
         return rtn, final_image
 
     @staticmethod
@@ -742,10 +753,11 @@ class TickStore(object):
                     if k != 'index':
                         rowmask[k][i] = 1
                     else:
-                        v = TickStore._to_ms(v)
+                        v = TickStore._to_ns(v)
                         if data[k][-1] > v:
                             raise UnorderedDataException("Timestamps out-of-order: %s > %s" % (
-                                ms_to_datetime(data[k][-1]), t))
+                                ns_to_datetime(data[k][-1]), t))
+                                # ms_to_datetime(data[k][-1]), t))
                     data[k].append(v)
                 except KeyError:
                     if k != 'index':

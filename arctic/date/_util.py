@@ -103,7 +103,8 @@ def to_dt(date, default_tz=None):
     Non-naive datetime
     """
     if isinstance(date, (int, long)):
-        return ms_to_datetime(date, default_tz)
+        # return ms_to_datetime(date, default_tz)
+        return ns_to_datetime(date, default_tz)
     elif date.tzinfo is None:
         if default_tz is None:
             raise ValueError("Must specify a TimeZone on incoming data")
@@ -155,6 +156,17 @@ def ms_to_datetime(ms, tzinfo=None):
 
     return datetime.datetime.fromtimestamp(ms * 1e-3, tzinfo)
 
+def ns_to_datetime(ns, tzinfo=None):
+    """Convert a nanosecond time value to an offset-aware Python datetime object."""
+    if not isinstance(ns, (int, long)):
+        raise TypeError('expected integer, not %s' % type(ns))
+
+    if tzinfo is None:
+        tzinfo = mktz()
+
+    # return datetime.datetime.fromtimestamp(ms * 1e-3, tzinfo)
+    return pd.to_datetime(ns, unit='ns',origin='unix', utc=True)
+
 
 def _add_tzone(dtm):
     if dtm.tzinfo is None:
@@ -180,6 +192,26 @@ def datetime_to_ms(d):
                 return calendar.timegm(tmp.utctimetuple()) * 1000 + millisecond
     except AttributeError:
         raise TypeError('expect Python datetime object, not %s' % type(d))
+
+def datetime_to_ns(d):
+    """Convert a Python datetime object to a nanosecond epoch (UTC) time value."""
+    try:
+        millisecond = d.microsecond // 1000
+
+        # https://github.com/pandas-dev/pandas/issues/32526
+        # https://github.com/pandas-dev/pandas/issues/32174
+        if sys.version_info < (3, 8, 0):
+            return calendar.timegm(_add_tzone(d).utctimetuple()) * 1000 + millisecond
+        else:
+            tmp = _add_tzone(d)
+            epoch = datetime.datetime.utcfromtimestamp(0).replace(tzinfo=tmp.tzinfo)
+            tmp = pd.to_datetime(tmp, unit='ns', utc=True)
+            converted_time = (tmp - epoch) // pd.Timedelta('1ns')
+            return converted_time
+
+    except AttributeError:
+        raise TypeError('expect Python datetime object, not %s' % type(d))
+
 
 
 def utc_dt_to_local_dt(dtm):
